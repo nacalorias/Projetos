@@ -1,0 +1,85 @@
+import machine
+from machine import Pin, PWM
+import time
+import dht
+import network
+from umqtt.simple import MQTTClient
+
+# Configurações do MQTT
+MQTT_CLIENT_ID = "trabalho_03"
+MQTT_BROKER = "broker.mqttdashboard.com"
+MQTT_PORT = 1883
+MQTT_TOPIC_SEND = "alarme/enviar"
+MQTT_TOPIC_RECEIVE = "alarme/receber"
+MQTT_USER = "123456"
+MQTT_PASSWORD = "123456"
+
+# Conexão WIFI
+print("Conectando ao WIFI", end="")
+sta_if = network.WLAN(network.STA_IF) # Configura a interface de rede Wi-Fi
+sta_if.active(True) # Ativa a interface de rede
+sta_if.connect('Wokwi-GUEST', '') # Conecta à rede Wi-Fi especificada do wokwi
+while not sta_if.isconnected(): # Aguarda até que a conexão seja estabelecida
+    print(".", end="")
+    time.sleep(0.1)  # Aguarda 0,1 segundo antes de verificar de novo
+print("Conectado!")
+
+
+# Função de chamada do MQTT
+def mqtt_callback(topic, msg):
+    print((topic, msg)) # Imprime o tópico e a mensagem recebida
+
+
+# Função para conectar ao MQTT broker
+def connect_mqtt():
+    client = MQTTClient(MQTT_CLIENT_ID, MQTT_BROKER, port=MQTT_PORT, user=MQTT_USER, password=MQTT_PASSWORD) # Cria o cliente MQTT com as configurações fornecidas
+    client.set_callback(mqtt_callback) # Define a função de callback para mensagens recebidas
+    client.connect() # Conecta ao broker MQTT
+    client.subscribe(MQTT_TOPIC_RECEIVE) # Conecta ao broker MQTT
+    print('Conectado ao %s MQTT broker, inscrito em %s topic' % (MQTT_BROKER, MQTT_TOPIC_RECEIVE)) # Imprime uma mensagem de confirmação
+    return client # Retorna o cliente MQTT
+
+# Inicialização do hardware
+buzzer = PWM(Pin(26))
+sensor = dht.DHT22(machine.Pin(32))
+led_v = Pin(15, Pin.OUT)
+led_v2 = Pin(4, Pin.OUT)
+push_button = Pin(13, Pin.IN, Pin.PULL_UP)
+
+def beep(duration, frequency=1000):
+    buzzer.freq(frequency) # Define a frequência do buzzer
+    buzzer.duty(512)  #
+    time.sleep(duration) # Aguarda a duração especificada
+    buzzer.duty(0)  # Desliga o alarme
+
+# Inicialização do MQTT
+client = connect_mqtt()
+
+# Looping principal
+while True:
+    sensor.measure()  # Mede a temperatura e a umidade com o sensor DHT22
+    temp = sensor.temperature() # Imprime a temperatura medida
+    hum = sensor.humidity() # Imprime a umidade medida
+    print("Temperatura atual: ", temp) 
+    print("Umidade atual: ", hum)
+    time.sleep(2)  # Aguarda 2 segundos
+    
+    # Checa o estado do botão e se a temperatura e umidade estão elevadas
+    if temp > 50.0 and push_button.value() == 1 and hum < 20.0:
+        print("Alerta de incêndio!!") # Imprime uma mensagem de alerta
+        for _ in range(10):  # Looping de exemplo para ligar o beep e o flash por alguns ciclos 
+            beep(0.1) 
+            led_v.on()
+            time.sleep(0.1)
+            led_v.off()
+            time.sleep(0.1)
+            beep(0.1)
+            led_v2.on()
+            time.sleep(0.1)
+            led_v2.off()
+            time.sleep(0.1)
+            client.publish(MQTT_TOPIC_SEND, 'Fire alert!! Temperature: {} C, Humidity: {} %'.format(temp, hum)) # Mensagem enviada no app
+    else:
+        led_v.off()
+        led_v2.off()
+        buzzer.duty(0)
